@@ -45,7 +45,7 @@ def error_rate(ym, y):
 
 def get_normalized_data():
     print("Reading and formatting data, this might take a second...")
-    df = pd.read_csv('train.csv')
+    df = pd.read_csv('../train.csv')
     data = df.values.astype(np.float32)
 
     # Shuffle the data to be in random order

@@ -1,7 +1,21 @@
+import sys
 import numpy as np
 import tensorflow as tf
 import pandas as pd
 import matplotlib.pyplot as plt
+
+def print_progress(current, total, label="", info="", char_space=50):
+    # Saving space for the start and end bars
+    char_space -= 2
+
+    # Calculating the completed characters in the progress bar
+    completed_char = int((current/total) * char_space) if current != 0 else 0
+    missing_char = char_space - completed_char
+    progress_string = f"\r[{'='*completed_char}{' '*missing_char}] {current}/{total} {label} {info}"
+
+    # Filling the completed chars
+    sys.stdout.write(progress_string)
+    sys.stdout.flush()
 
 def get_normalized_data():
     print("Reading and formatting data, this might take a second...")
@@ -38,83 +52,106 @@ def one_hot_encode(y):
 def error_rate(p, t):
     return np.mean(p != t)
 
+class NeuralNetwork(tf.Module):
+    def __init__(self, input_units, hidden_units_1, hidden_units_2, output_units):
+
+        # Initialization variables
+        W1_init = np.random.randn(input_units, hidden_units_1) / np.sqrt(input_units)
+        b1_init = np.zeros((1, hidden_units_1))
+        W2_init = np.random.randn(hidden_units_1, hidden_units_2) / np.sqrt(hidden_units_1)
+        b2_init = np.zeros((1, hidden_units_2))
+        W3_init = np.random.randn(hidden_units_2, output_units) / np.sqrt(hidden_units_2)
+        b3_init = np.zeros((1, output_units))
+
+        # Creating the tensorflow variables
+        self.W1 = tf.Variable(W1_init.astype(np.float32))
+        self.b1 = tf.Variable(b1_init.astype(np.float32))
+        self.W2 = tf.Variable(W2_init.astype(np.float32))
+        self.b2 = tf.Variable(b2_init.astype(np.float32))
+        self.W3 = tf.Variable(W3_init.astype(np.float32))
+        self.b3 = tf.Variable(b3_init.astype(np.float32))
+
+        # Saving the parameters
+        self.params = [self.W1, self.b1, self.W2, self.b2, self.W3, self.b3]
+
+    def forward(self, X):
+        # Making sure x is a tensor
+        X = tf.cast(X, dtype=np.float32)
+    
+        # Moving forward
+        Z1 = tf.matmul(X, self.W1) + self.b1
+        Z1 = tf.nn.relu(Z1)
+        Z2 = tf.matmul(Z1, self.W2) + self.b2
+        Z2 = tf.nn.relu(Z2)
+        Z3 = tf.matmul(Z2, self.W3) + self.b3
+        return Z3
+
+    def predict(self, X):
+        A = self.forward(X)
+        return tf.argmax(tf.nn.softmax(A), axis=1) # Argmax along the columns for every row
+
+    def loss(self, A, Y):
+        # Making sure input as tensors
+        A = tf.cast(A, dtype=np.float32)
+        Y = tf.cast(Y, dtype=np.float32)
+
+        # Cross entropy with logits
+        loss = tf.nn.softmax_cross_entropy_with_logits(labels=Y, logits=A)
+        return tf.reduce_mean(loss)
+
+    def train(self, X, Y, epochs, batch_size):
+        # To save the losses
+        losses = np.zeros(epochs)
+
+        # Defining the optimizer
+        optimizer = tf.keras.optimizers.Adam()
+
+        # Computing the number of batches
+        n_batches = int(np.ceil(X.shape[0]/batch_size))
+
+        # Iterating over all epochs and batches for every epoch
+        for epoch in range(epochs):
+            epoch_loss = 0
+            for i in range(n_batches):
+                # Grabbing the corresponding batch of data
+                Xb = X[i*batch_size:(i+1)*batch_size]
+                Yb = Y[i*batch_size:(i+1)*batch_size]
+
+                with tf.GradientTape() as tape:
+                    # First getting our current predictions
+                    predicted = self.forward(Xb)
+                    loss = self.loss(predicted, Yb)
+
+                # Saving the error
+                epoch_loss += loss.numpy()
+
+                # Getting the gradients of the loss with respect to all the model parameters and updating
+                grads = tape.gradient(loss, self.params)
+                optimizer.apply_gradients(zip(grads, self.params))
+
+                # Print progress
+                print_progress(i+1, n_batches, label="Batches", info=f"Epoch: {epoch+1}")
+
+            losses[epoch] = epoch_loss/n_batches
+
+        print("Done training...")
+        return losses
+
 
 # copy this first part from theano2.py
 def main():
     # step 1: get the data and define all the usual variables
-    Xtrain, Xtest, Ytrain, Ytest = get_normalized_data()
-
-    max_iter = 15
-    print_period = 50
-
-    lr = 0.00004
-    reg = 0.01
+    Xtrain, Ytrain, Xtest, Ytest = get_normalized_data()
 
     Ytrain_ind = one_hot_encode(Ytrain)
     Ytest_ind = one_hot_encode(Ytest)
 
-    N, D = Xtrain.shape
-    batch_sz = 500
-    n_batches = N // batch_sz
-
-    # add an extra layer just for fun
-    M1 = 300
-    M2 = 100
-    K = 10
-    W1_init = np.random.randn(D, M1) / np.sqrt(D)
-    b1_init = np.zeros(M1)
-    W2_init = np.random.randn(M1, M2) / np.sqrt(M1)
-    b2_init = np.zeros(M2)
-    W3_init = np.random.randn(M2, K) / np.sqrt(M2)
-    b3_init = np.zeros(K)
-
-    # define variables and expressions
-    X = tf.placeholder(tf.float32, shape=(None, D), name='X')
-    T = tf.placeholder(tf.float32, shape=(None, K), name='T')
-    W1 = tf.Variable(W1_init.astype(np.float32))
-    b1 = tf.Variable(b1_init.astype(np.float32))
-    W2 = tf.Variable(W2_init.astype(np.float32))
-    b2 = tf.Variable(b2_init.astype(np.float32))
-    W3 = tf.Variable(W3_init.astype(np.float32))
-    b3 = tf.Variable(b3_init.astype(np.float32))
-
-    # define the model
-    Z1 = tf.nn.relu( tf.matmul(X, W1) + b1 )
-    Z2 = tf.nn.relu( tf.matmul(Z1, W2) + b2 )
-    Yish = tf.matmul(Z2, W3) + b3 # remember, the cost function does the softmaxing! weird, right?
-
-    # softmax_cross_entropy_with_logits take in the "logits"
-    # if you wanted to know the actual output of the neural net,
-    # you could pass "Yish" into tf.nn.softmax(logits)
-    cost = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits_v2(logits=Yish, labels=T))
-
-    # we choose the optimizer but don't implement the algorithm ourselves
-    # let's go with RMSprop, since we just learned about it.
-    # it includes momentum!
-    train_op = tf.train.RMSPropOptimizer(lr, decay=0.99, momentum=0.9).minimize(cost)
-
-    # we'll use this to calculate the error rate
-    predict_op = tf.argmax(Yish, 1)
-
-    costs = []
-    init = tf.global_variables_initializer()
-    with tf.Session() as session:
-        session.run(init)
-
-        for i in range(max_iter):
-            for j in range(n_batches):
-                Xbatch = Xtrain[j*batch_sz:(j*batch_sz + batch_sz),]
-                Ybatch = Ytrain_ind[j*batch_sz:(j*batch_sz + batch_sz),]
-
-                session.run(train_op, feed_dict={X: Xbatch, T: Ybatch})
-                if j % print_period == 0:
-                    test_cost = session.run(cost, feed_dict={X: Xtest, T: Ytest_ind})
-                    prediction = session.run(predict_op, feed_dict={X: Xtest})
-                    err = error_rate(prediction, Ytest)
-                    print("Cost / err at iteration i=%d, j=%d: %.3f / %.3f" % (i, j, test_cost, err))
-                    costs.append(test_cost)
-
-    plt.plot(costs)
+    # Creating the model and training
+    model = NeuralNetwork(Xtrain.shape[1], 500, 100, 10) # Units per layer, 4 layers in this case
+    loss = model.train(Xtrain, Ytrain_ind, epochs=100, batch_size=8192) # Training for 10 epochs
+    
+    plt.plot(loss)
+    plt.grid()
     plt.show()
 
 if __name__ == '__main__':
